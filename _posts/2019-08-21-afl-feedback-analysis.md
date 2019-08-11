@@ -245,6 +245,211 @@ u32 cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
 
 通过比较hash值，就可以判断`trace_bits`是否发生了变化，从而判断此次mutated input是否带来了新路径，为之后的fuzzing提供参考信息。
 
+
+具体在afl-fuzz.c中.对trace_bits是否带来新路径的判断有三种分类。
+（1）CFG边数量变化
+（2）新的CFG边
+（3）（没看懂-----更新了覆盖统计数据，后续调用都返回0）
+
+{% highlight c %}
+/* Check if the current execution path brings anything new to the table.
+   Update virgin bits to reflect the finds. Returns 1 if the only change is
+   the hit-count for a particular tuple; 2 if there are new tuples seen. 
+   Updates the map, so subsequent calls will always return 0.
+
+   This function is called after every exec() on a fairly large buffer, so
+   it needs to be fast. We do this in 32-bit and 64-bit flavors. */
+
+static inline u8 has_new_bits(u8* virgin_map) {
+{% endhighlight %}
+
+判断是否是interesting的函数：
+{% highlight c %}
+/* Check if the result of an execve() during routine fuzzing is interesting,
+   save or queue the input test case for further analysis if so. Returns 1 if
+   entry is saved, 0 otherwise. */
+
+static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
+
+  u8  *fn = "";
+  u8  hnb;
+  s32 fd;
+  u8  keeping = 0, res;
+
+  if (fault == crash_mode) {
+
+    /* Keep only if there are new bits in the map, add to queue for
+       future fuzzing, etc. */
+
+    if (!(hnb = has_new_bits(virgin_bits))) {
+      if (crash_mode) total_crashes++;
+      return 0;
+    }    
+
+#ifndef SIMPLE_FILES
+
+    fn = alloc_printf("%s/queue/id:%06u,%s", out_dir, queued_paths,
+                      describe_op(hnb));
+
+#else
+
+    fn = alloc_printf("%s/queue/id_%06u", out_dir, queued_paths);
+
+#endif /* ^!SIMPLE_FILES */
+
+    add_to_queue(fn, len, 0);
+
+    if (hnb == 2) {
+      queue_top->has_new_cov = 1;
+      queued_with_cov++;
+    }
+
+    queue_top->exec_cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
+
+    /* Try to calibrate inline; this also calls update_bitmap_score() when
+       successful. */
+
+    res = calibrate_case(argv, queue_top, mem, queue_cycle - 1, 0);
+
+    if (res == FAULT_ERROR)
+      FATAL("Unable to execute target application");
+
+    fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    if (fd < 0) PFATAL("Unable to create '%s'", fn);
+    ck_write(fd, mem, len, fn);
+    close(fd);
+
+    keeping = 1;
+
+  }
+
+  switch (fault) {
+
+    case FAULT_TMOUT:
+
+      /* Timeouts are not very interesting, but we're still obliged to keep
+         a handful of samples. We use the presence of new bits in the
+         hang-specific bitmap as a signal of uniqueness. In "dumb" mode, we
+         just keep everything. */
+
+      total_tmouts++;
+
+      if (unique_hangs >= KEEP_UNIQUE_HANG) return keeping;
+
+      if (!dumb_mode) {
+
+#ifdef __x86_64__
+        simplify_trace((u64*)trace_bits);
+#else
+        simplify_trace((u32*)trace_bits);
+#endif /* ^__x86_64__ */
+
+        if (!has_new_bits(virgin_tmout)) return keeping;
+
+      }
+
+      unique_tmouts++;
+
+      /* Before saving, we make sure that it's a genuine hang by re-running
+         the target with a more generous timeout (unless the default timeout
+         is already generous). */
+
+      if (exec_tmout < hang_tmout) {
+
+        u8 new_fault;
+        write_to_testcase(mem, len);
+        new_fault = run_target(argv, hang_tmout);
+
+        if (stop_soon || new_fault != FAULT_TMOUT) return keeping;
+
+      }
+
+#ifndef SIMPLE_FILES
+
+      fn = alloc_printf("%s/hangs/id:%06llu,%s", out_dir,
+                        unique_hangs, describe_op(0));
+
+#else
+
+      fn = alloc_printf("%s/hangs/id_%06llu", out_dir,
+                        unique_hangs);
+
+#endif /* ^!SIMPLE_FILES */
+
+      unique_hangs++;
+
+      last_hang_time = get_cur_time();
+
+      break;
+
+    case FAULT_CRASH:
+
+      /* This is handled in a manner roughly similar to timeouts,
+         except for slightly different limits and no need to re-run test
+         cases. */
+
+      total_crashes++;
+
+      if (unique_crashes >= KEEP_UNIQUE_CRASH) return keeping;
+
+      if (!dumb_mode) {
+
+#ifdef __x86_64__
+        simplify_trace((u64*)trace_bits);
+#else
+        simplify_trace((u32*)trace_bits);
+#endif /* ^__x86_64__ */
+
+        if (!has_new_bits(virgin_crash)) return keeping;
+
+      }
+
+      if (!unique_crashes) write_crash_readme();
+
+#ifndef SIMPLE_FILES
+
+      fn = alloc_printf("%s/crashes/id:%06llu,sig:%02u,%s", out_dir,
+                        unique_crashes, kill_signal, describe_op(0));
+
+#else
+
+      fn = alloc_printf("%s/crashes/id_%06llu_%02u", out_dir, unique_crashes,
+                        kill_signal);
+
+#endif /* ^!SIMPLE_FILES */
+
+      unique_crashes++;
+
+      last_crash_time = get_cur_time();
+      last_crash_execs = total_execs;
+
+      break;
+
+    case FAULT_ERROR: FATAL("Unable to execute target application");
+
+    default: return keeping;
+
+  }
+
+  /* If we're here, we apparently want to save the crash or hang
+     test case, too. */
+
+  fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
+  if (fd < 0) PFATAL("Unable to create '%s'", fn);
+  ck_write(fd, mem, len, fn);
+  close(fd);
+
+  ck_free(fn);
+
+  return keeping;
+
+}
+{% endhighlight %}
+
+
+
+
+
 ## 总结
 
 以上便是对AFL内部细节的一些分析整理，其实还有很多地方值得进一步深入去研究，例如AFL是如何判断一条路径是否是favorite的、如何对seed文件进行变化，等等。如果只是使用AFL进行简单的fuzzing，那么这些细节其实不需要掌握太多；但是如果需要在AFL的基础上进一步针对特定目标进行优化，那么了解AFL的内部工作原理就是必须的了。
