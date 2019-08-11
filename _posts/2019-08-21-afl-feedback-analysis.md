@@ -152,8 +152,17 @@ static inline void classify_counts(u32* mem) {
 }
 {% endhighlight %}
 
-该函数在子进程结束（也就是完成一次测试后）时调用。具体场景：
+其被run_targets调用（run_targets是fuzzer的一部分,forkserver启动后，一旦需要执行某个测试用例，fuzzer会调用run_target()方法通知fork_server启动下一轮测试。其通过命令管道通知forkserver准备fork；并通过状态管道，获取子进程pid）。
+随后fuzzer再次读取状态管道，获取子进程状态，并由此来判断子进程结束的原因，例如正常退出，超时，崩溃等，并进行相应的记录。
+
+上文场景(不关心可以跳过)：
+
 {% highlight c %}
+/* Execute target application, monitoring for timeouts. Return status
+   information. The called program will update trace_bits[]. */
+
+static u8 run_target(char** argv, u32 timeout) {
+    ...
     s32 res;
 
     /* In non-dumb mode, we have the fork server up and running, so simply
@@ -202,7 +211,6 @@ static inline void classify_counts(u32* mem) {
     }
 
   }
-
   if (!WIFSTOPPED(status)) child_pid = 0;
 
   it.it_value.tv_sec = 0;
@@ -219,7 +227,9 @@ static inline void classify_counts(u32* mem) {
   MEM_BARRIER();
 
   tb4 = *(u32*)trace_bits;
+{% endhighlight %}
 
+{% highlight c %}
 #ifdef __x86_64__
   classify_counts((u64*)trace_bits);
 #else
