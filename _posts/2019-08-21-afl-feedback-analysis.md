@@ -531,33 +531,7 @@ TIP:
 `main`  
 
 
-其中`run_target()`的主要工作就是通知fork_server再启动一个子进程
-{% highlight %}
-  } else {
-
-    s32 res;
-
-    /* In non-dumb mode, we have the fork server up and running, so simply
-       tell it to have at it, and then read back PID. */
-
-    if ((res = write(fsrv_ctl_fd, &prev_timed_out, 4)) != 4) {
-
-      if (stop_soon) return 0;
-      RPFATAL(res, "Unable to request new process from fork server (OOM?)");
-
-    }
-
-    if ((res = read(fsrv_st_fd, &child_pid, 4)) != 4) {
-
-      if (stop_soon) return 0;
-      RPFATAL(res, "Unable to request new process from fork server (OOM?)");
-
-    }
-
-    if (child_pid <= 0) FATAL("Fork server is misbehaving (OOM?)");
-
-  }
-{% endhighlight %}
+其中`run_target()`的主要工作就是通知fork server再启动一个子进程
 
 {% highlight %}
 /* Calibrate a new test case. This is done when processing the input directory
@@ -733,7 +707,7 @@ abort_calibration:
 {% endhighlight %}
 
 目前初步断定,对有趣种子的识别和后处理主要在
-has_new_bits()以及callibrate_case()中.
+`has_new_bits()`以及`callibrate_case()`中.
 也就是说我们在这里获得运行时设置好的共享变量,分析该种子是否对关键变量有积极作用.
 但是我们关心的是这个积极作用是哪个变化（尤其是bitflip）引起的,其主要作用于那些字节,我们应该继续怎样?目前还未考虑清楚.
 
