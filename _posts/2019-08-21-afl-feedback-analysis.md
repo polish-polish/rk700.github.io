@@ -246,10 +246,24 @@ u32 cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
 通过比较hash值，就可以判断`trace_bits`是否发生了变化，从而判断此次mutated input是否带来了新路径，为之后的fuzzing提供参考信息。
 
 
-具体在afl-fuzz.c中.对trace_bits是否带来新路径的判断有三种分类。
-（1）CFG边数量变化
-（2）新的CFG边
-（3）（没看懂-----更新了覆盖统计数据，后续调用都返回0）
+具体在afl-fuzz.c的has_new_bits()函数中.对trace_bits是否带来新路径的判断有三种分类。
+（1）ret=1 仅仅CFG边数量变化
+（2）ret=2 新的CFG边
+（3）ret=3 没有变化
+virgin_bits就是集合了所有到目前为止发现的CFG边的的一个trace.virgin_map是其一个副本.
+新触发的trace(也就是这里的trace_bits)要和这个基准进行比较,并对virgin_map进行修改.
+例如：
+virgin:0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff
+cur   :0x00 0x01 0x00 0x00 0x00 0x00 0x00 0x00
+得到的就是
+virgin:0xff 0xfe 0xff 0xff 0xff 0xff 0xff 0xff
+注意virgin初始化全是0xff,而trace_bits初始化全是0x00
+
+当CFG边的触发次数发生变化（落在新的bucket）(ret=1)或者发现了新的CFG边(ret=2)时,virgin_map会发生改变.
+目前还不明白virgin_bits有什么用以及为什么要有这句话.
+{% highlight c %}
+if (ret && virgin_map == virgin_bits) bitmap_changed = 1;
+{% endhighlight %}
 
 {% highlight c %}
 /* Check if the current execution path brings anything new to the table.
@@ -261,6 +275,59 @@ u32 cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
    it needs to be fast. We do this in 32-bit and 64-bit flavors. */
 
 static inline u8 has_new_bits(u8* virgin_map) {
+/* Here we trim out conditions in x86_64*/
+  u32* current = (u32*)trace_bits;
+  u32* virgin  = (u32*)virgin_map;
+
+  u32  i = (MAP_SIZE >> 2);
+
+  /* Calculate distance of current input to targets */
+  u32* total_distance = (u32*)(trace_bits + MAP_SIZE);
+  u32* total_count = (u32*)(trace_bits + MAP_SIZE + 4);
+
+  if (*total_count > 0) {
+    cur_distance = (double) (*total_distance) / (double) (*total_count);
+  else
+    cur_distance = -1.0;
+
+  u8   ret = 0;
+
+  while (i--) {
+
+    /* Optimize for (*current & *virgin) == 0 - i.e., no bits in current bitmap
+       that have not been already cleared from the virgin map - since this will
+       almost always be the case. */
+
+    if (unlikely(*current) && unlikely(*current & *virgin)) {
+
+      if (likely(ret < 2)) {
+
+        u8* cur = (u8*)current;
+        u8* vir = (u8*)virgin;
+
+        /* Looks like we have not found any new bytes yet; see if any non-zero
+           bytes in current[] are pristine in virgin[]. */
+
+        if ((cur[0] && vir[0] == 0xff) || (cur[1] && vir[1] == 0xff) ||
+            (cur[2] && vir[2] == 0xff) || (cur[3] && vir[3] == 0xff)) ret = 2;
+        else ret = 1;
+
+      }
+
+      *virgin &= ~*current;
+
+    }
+
+    current++;
+    virgin++;
+
+  }
+
+  if (ret && virgin_map == virgin_bits) bitmap_changed = 1;
+
+  return ret;
+
+}
 {% endhighlight %}
 
 判断是否是interesting的函数：
