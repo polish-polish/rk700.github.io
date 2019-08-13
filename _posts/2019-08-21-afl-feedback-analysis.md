@@ -253,10 +253,14 @@ u32 cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
 virgin_bits就是集合了所有到目前为止发现的CFG边的的一个trace.virgin_map是其一个副本.
 新触发的trace(也就是这里的trace_bits)要和这个基准进行比较,并对virgin_map进行修改.
 例如：
+{% highlight c %}
 virgin:0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff
 cur   :0x00 0x01 0x00 0x00 0x00 0x00 0x00 0x00
+{% endhighlight %}
 得到的就是
+{% highlight c %}
 virgin:0xff 0xfe 0xff 0xff 0xff 0xff 0xff 0xff
+{% endhighlight %}
 注意virgin初始化全是0xff,而trace_bits初始化全是0x00
 
 当CFG边的触发次数发生变化（落在新的bucket）(ret=1)或者发现了新的CFG边(ret=2)时,virgin_map会发生改变.
