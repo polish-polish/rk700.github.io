@@ -529,17 +529,188 @@ TIP:
 `common_fuzz_stuff`  
 `fuzz_one`  
 `main`  
+{% highlight c %}
+/* Calibrate a new test case. This is done when processing the input directory
+   to warn about flaky or otherwise problematic test cases early on; and when
+   new paths are discovered to detect variable behavior and so on. */
 
+static u8 calibrate_case(char** argv, struct queue_entry* q, u8* use_mem,
+                         u32 handicap, u8 from_queue) {
+
+  static u8 first_trace[MAP_SIZE];
+
+  u8  fault = 0, new_bits = 0, var_detected = 0,
+      first_run = (q->exec_cksum == 0);
+
+  u64 start_us, stop_us;
+
+  s32 old_sc = stage_cur, old_sm = stage_max;
+  u32 use_tmout = exec_tmout;
+  u8* old_sn = stage_name;
+
+  /* Be a bit more generous about timeouts when resuming sessions, or when
+     trying to calibrate already-added finds. This helps avoid trouble due
+     to intermittent latency. */
+
+  if (!from_queue || resuming_fuzz)
+    use_tmout = MAX(exec_tmout + CAL_TMOUT_ADD,
+                    exec_tmout * CAL_TMOUT_PERC / 100);
+
+  q->cal_failed++;
+
+  stage_name = "calibration";
+  stage_max  = CAL_CYCLES;
+
+  /* Make sure the forkserver is up before we do anything, and let's not
+     count its spin-up time toward binary calibration. */
+
+  if (dumb_mode != 1 && !no_forkserver && !forksrv_pid)
+    init_forkserver(argv);
+
+  if (q->exec_cksum) memcpy(first_trace, trace_bits, MAP_SIZE);
+
+  start_us = get_cur_time_us();
+
+  for (stage_cur = 0; stage_cur < stage_max; stage_cur++) {
+
+    u32 cksum;
+
+    if (!first_run && !(stage_cur % stats_update_freq)) show_stats();
+
+    write_to_testcase(use_mem, q->len);
+
+    fault = run_target(argv, use_tmout);
+
+    /* stop_soon is set by the handler for Ctrl+C. When it's pressed,
+       we want to bail out quickly. */
+
+    if (stop_soon || fault != crash_mode) goto abort_calibration;
+
+    if (!dumb_mode && !stage_cur && !count_bytes(trace_bits)) {
+      fault = FAULT_NOINST;
+      goto abort_calibration;
+    }
+
+    cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
+
+    /* This is relevant when test cases are added w/out save_if_interesting */
+
+    if (q->distance <= 0) {
+
+      /* This calculates cur_distance */
+      has_new_bits(virgin_bits);
+
+      q->distance = cur_distance;
+      if (cur_distance > 0) {
+
+        if (max_distance <= 0) {
+          max_distance = cur_distance;
+          min_distance = cur_distance;
+        }
+        if (cur_distance > max_distance) max_distance = cur_distance;
+        if (cur_distance < min_distance) min_distance = cur_distance;
+
+      }
+
+    }
+
+    if (q->exec_cksum != cksum) {
+
+      u8 hnb = has_new_bits(virgin_bits);
+      if (hnb > new_bits) new_bits = hnb;
+
+      if (q->exec_cksum) {
+
+        u32 i;
+
+        for (i = 0; i < MAP_SIZE; i++) {
+
+          if (!var_bytes[i] && first_trace[i] != trace_bits[i]) {
+
+            var_bytes[i] = 1;
+            stage_max    = CAL_CYCLES_LONG;
+
+          }
+
+        }
+
+        var_detected = 1;
+
+      } else {
+
+        q->exec_cksum = cksum;
+        memcpy(first_trace, trace_bits, MAP_SIZE);
+
+      }
+
+    }
+
+  }
+
+  stop_us = get_cur_time_us();
+
+  total_cal_us     += stop_us - start_us;
+  total_cal_cycles += stage_max;
+
+  /* OK, let's collect some stats about the performance of this test case.
+     This is used for fuzzing air time calculations in calculate_score(). */
+
+  q->exec_us     = (stop_us - start_us) / stage_max;
+  q->bitmap_size = count_bytes(trace_bits);
+  q->handicap    = handicap;
+  q->cal_failed  = 0;
+
+  total_bitmap_size += q->bitmap_size;
+  total_bitmap_entries++;
+
+  update_bitmap_score(q);
+
+  /* If this case didn't result in new output from the instrumentation, tell
+     parent. This is a non-critical problem, but something to warn the user
+     about. */
+
+  if (!dumb_mode && first_run && !fault && !new_bits) fault = FAULT_NOBITS;
+
+abort_calibration:
+
+  if (new_bits == 2 && !q->has_new_cov) {
+    q->has_new_cov = 1;
+    queued_with_cov++;
+  }
+
+  /* Mark variable paths. */
+
+  if (var_detected) {
+
+    var_byte_count = count_bytes(var_bytes);
+
+    if (!q->var_behavior) {
+      mark_as_variable(q);
+      queued_variable++;
+    }
+
+  }
+
+  stage_name = old_sn;
+  stage_cur  = old_sc;
+  stage_max  = old_sm;
+
+  if (!first_run) show_stats();
+
+  return fault;
+
+}
+{% endhighlight %}
 ## Task
 目前初步断定,对有趣种子的识别和后处理主要在
 `has_new_bits()`以及`callibrate_case()`中.
-也就是说我们在这里获得运行时设置好的共享变量,分析该种子是否对关键变量有积极作用.
-但是我们关心的是这个积极作用是哪个变化（尤其是bitflip）引起的,其主要作用于那些字节,我们应该继续怎样?目前还未考虑清楚.
+也就是说,因此分析该种子是否引起关键变量的变化也应在这里编写.
+至于这个积极的效应是哪个mutation引起的（尤其是bitflip）,其对继续变异那些字节的反馈如何实现?目前还未考虑清楚.
 
 对变量监控的插桩工作应该在llvm_mode/afl-llvm-pass.so.cc:209~215,497~577中进行.
 具体段落：  
 
-{% highlight %}
+{% highlight c %}
   /* Get globals for the SHM region and the previous location. Note that
      __afl_prev_loc is thread-local. */
 
@@ -552,7 +723,7 @@ TIP:
       0, GlobalVariable::GeneralDynamicTLSModel, 0, false);
 {% endhighlight %}
   
-{% highlight %}
+{% highlight c %}
         BasicBlock::iterator IP = BB.getFirstInsertionPt();
         IRBuilder<> IRB(&(*IP));
 
