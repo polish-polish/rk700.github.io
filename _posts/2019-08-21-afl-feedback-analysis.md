@@ -524,7 +524,7 @@ TIP：
 TIP: 
 部分正在理解的调用轨迹  
 `run_target`  
-`callibrate_case`（仅在发现感兴趣的输入(has_new_bits()!=0)才调用）  
+`callibrate_case`（仅在发现感兴趣的输入(`has_new_bits()!=0`)才调用）  
 `save_if_interesting`（每个生成的测试用例都要调用）  
 `common_fuzz_stuff`  
 `fuzz_one`  
