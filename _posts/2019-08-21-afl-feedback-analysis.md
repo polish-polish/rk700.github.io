@@ -537,6 +537,7 @@ TIP:
 
 对变量监控的插桩工作应该在llvm_mode/afl-llvm-pass.so.cc:209~215,497~577中进行.
 具体段落：  
+
 {% highlight %}
   /* Get globals for the SHM region and the previous location. Note that
      __afl_prev_loc is thread-local. */
