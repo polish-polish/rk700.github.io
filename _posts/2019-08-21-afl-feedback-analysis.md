@@ -517,6 +517,8 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 }
 {% endhighlight %}
 
+TIP：
+`run_target`在运行时，`argv`中的输入文件(即用来代替AFL中的`@@`参数)是`$WORKDIR/out/entry_result/.cur_input`
 
 
 
