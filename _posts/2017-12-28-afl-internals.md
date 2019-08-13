@@ -97,6 +97,14 @@ forksrv_pid = fork();
 int st_pipe[2], ctl_pipe[2];
 {% endhighlight %}
 
+Tip:管道的创建是用`pipe`函数。
+文件描述符`st_pipe[0]`，`ctl_pipe[0]`是输出管道,与`read`函数配合使用。
+文件描述符`t_pipe[1]`，`ctl_pipe[1]`是输入管道,与`write`函数配合使用。
+AFL的管道创建代码：
+{% highlight c %}
+if (pipe(st_pipe) || pipe(ctl_pipe)) PFATAL("pipe() failed");
+{% endhighlight %}
+
 对于子进程（fork server），会进行一系列设置，其中包括将上述两个管道分配到预先指定的fd，并最终执行target：
 
 {% highlight c %}

@@ -521,6 +521,19 @@ TIP：
 `run_target`在运行时，`argv`中的输入文件(即用来代替AFL中的`@@`参数)是`$WORKDIR/out/entry_result/.cur_input`
 
 
+TIP: 
+部分正在理解的调用轨迹
+`run_target`
+`callibrate_case`（仅在发现感兴趣的输入(has_new_bits()!=0)才调用）
+`save_if_interesting`（每个生成的测试用例都要调用）
+`common_fuzz_stuff`
+`fuzz_one`
+`main`
+
+
+
+
+
 
 
 ## 总结
