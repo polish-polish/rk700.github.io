@@ -250,8 +250,8 @@ u32 cksum = hash32(trace_bits, MAP_SIZE, HASH_CONST);
 （1）ret=1 仅仅CFG边数量变化
 （2）ret=2 新的CFG边
 （3）ret=3 没有变化
-virgin_bits就是集合了所有到目前为止发现的CFG边的的一个trace.virgin_map是其一个副本.
-新触发的trace(也就是这里的trace_bits)要和这个基准进行比较,并对virgin_map进行修改.
+virgin_bits就是集合了所有到目前为止发现的CFG边的的一个trace.`virgin_map`是其一个副本.
+新触发的trace(也就是这里的`trace_bits`)要和这个基准进行比较,并对`virgin_map`进行修改.
 例如：
 {% highlight c %}
 virgin:0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff
@@ -261,10 +261,10 @@ cur   :0x00 0x01 0x00 0x00 0x00 0x00 0x00 0x00
 {% highlight c %}
 virgin:0xff 0xfe 0xff 0xff 0xff 0xff 0xff 0xff
 {% endhighlight %}
-注意virgin初始化全是0xff,而trace_bits初始化全是0x00
+注意`virgin`初始化全是`0xff`,而`trace_bits`初始化全是`0x00`
 
-当CFG边的触发次数发生变化（落在新的bucket）(ret=1)或者发现了新的CFG边(ret=2)时,virgin_map会发生改变.
-目前还不明白virgin_bits有什么用以及为什么要有这句话.
+当CFG边的触发次数发生变化（落在新的bucket）(`ret=1`)或者发现了新的CFG边(`ret=2`)时,`virgin_map`会发生改变.
+目前还不明白`virgin_bits`有什么用以及为什么要有这句话.
 {% highlight c %}
 if (ret && virgin_map == virgin_bits) bitmap_changed = 1;
 {% endhighlight %}
