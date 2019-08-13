@@ -732,7 +732,111 @@ abort_calibration:
 }
 {% endhighlight %}
 
+目前初步断定,对有趣种子的识别和后处理主要在
+has_new_bits()以及callibrate_case()中.
+也就是说我们在这里获得运行时设置好的共享变量,分析该种子是否对关键变量有积极作用.
+但是我们关心的是这个积极作用是哪个变化（尤其是bitflip）引起的,其主要作用于那些字节,我们应该继续怎样?目前还未考虑清楚.
 
+对变量监控的插桩工作应该在llvm_mode/afl-llvm-pass.so.cc:209~215,497~577中进行.
+具体段落：  
+{% highlight %}
+  /* Get globals for the SHM region and the previous location. Note that
+     __afl_prev_loc is thread-local. */
+
+  GlobalVariable *AFLMapPtr =
+      new GlobalVariable(M, PointerType::get(Int8Ty, 0), false,
+                         GlobalValue::ExternalLinkage, 0, "__afl_area_ptr");
+
+  GlobalVariable *AFLPrevLoc = new GlobalVariable(
+      M, Int32Ty, false, GlobalValue::ExternalLinkage, 0, "__afl_prev_loc",
+      0, GlobalVariable::GeneralDynamicTLSModel, 0, false);
+{% endhighlight %}
+  
+{% highlight %}
+        BasicBlock::iterator IP = BB.getFirstInsertionPt();
+        IRBuilder<> IRB(&(*IP));
+
+        if (AFL_R(100) >= inst_ratio) continue;
+
+        /* Make up cur_loc */
+
+        unsigned int cur_loc = AFL_R(MAP_SIZE);
+
+        ConstantInt *CurLoc = ConstantInt::get(Int32Ty, cur_loc);
+
+        /* Load prev_loc */
+
+        LoadInst *PrevLoc = IRB.CreateLoad(AFLPrevLoc);
+        PrevLoc->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+        Value *PrevLocCasted = IRB.CreateZExt(PrevLoc, IRB.getInt32Ty());
+
+        /* Load SHM pointer */
+
+        LoadInst *MapPtr = IRB.CreateLoad(AFLMapPtr);
+        MapPtr->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+        Value *MapPtrIdx =
+            IRB.CreateGEP(MapPtr, IRB.CreateXor(PrevLocCasted, CurLoc));
+
+        /* Update bitmap */
+
+        LoadInst *Counter = IRB.CreateLoad(MapPtrIdx);
+        Counter->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+        Value *Incr = IRB.CreateAdd(Counter, ConstantInt::get(Int8Ty, 1));
+        IRB.CreateStore(Incr, MapPtrIdx)
+           ->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+
+        /* Set prev_loc to cur_loc >> 1 */
+
+        StoreInst *Store =
+            IRB.CreateStore(ConstantInt::get(Int32Ty, cur_loc >> 1), AFLPrevLoc);
+        Store->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+
+        if (distance >= 0) {
+
+          unsigned int udistance = (unsigned) distance;
+
+#ifdef __x86_64__
+          IntegerType *LargestType = Int64Ty;
+          ConstantInt *MapDistLoc = ConstantInt::get(LargestType, MAP_SIZE);
+          ConstantInt *MapCntLoc = ConstantInt::get(LargestType, MAP_SIZE + 8);
+          ConstantInt *Distance = ConstantInt::get(LargestType, udistance);
+#else
+          IntegerType *LargestType = Int32Ty;
+          ConstantInt *MapDistLoc = ConstantInt::get(LargestType, MAP_SIZE);
+          ConstantInt *MapCntLoc = ConstantInt::get(LargestType, MAP_SIZE + 4);
+          ConstantInt *Distance = ConstantInt::get(LargestType, udistance);
+#endif
+
+          /* Add distance to shm[MAPSIZE] */
+
+          Value *MapDistPtr = IRB.CreateGEP(MapPtr, MapDistLoc);
+#ifdef LLVM_OLD_DEBUG_API
+          LoadInst *MapDist = IRB.CreateLoad(MapDistPtr);
+          MapDist->mutateType(LargestType);
+#else
+          LoadInst *MapDist = IRB.CreateLoad(LargestType, MapDistPtr);
+#endif
+          MapDist->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+          Value *IncrDist = IRB.CreateAdd(MapDist, Distance);
+          IRB.CreateStore(IncrDist, MapDistPtr)
+              ->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+
+          /* Increase count at to shm[MAPSIZE + (4 or 8)] */
+
+          Value *MapCntPtr = IRB.CreateGEP(MapPtr, MapCntLoc);
+#ifdef LLVM_OLD_DEBUG_API
+          LoadInst *MapCnt = IRB.CreateLoad(MapCntPtr);
+          MapCnt->mutateType(LargestType);
+#else
+          LoadInst *MapCnt = IRB.CreateLoad(LargestType, MapCntPtr);
+#endif
+          MapCnt->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+          Value *IncrCnt = IRB.CreateAdd(MapCnt, ConstantInt::get(LargestType, 1));
+          IRB.CreateStore(IncrCnt, MapCntPtr)
+              ->setMetadata(M.getMDKindID("nosanitize"), MDNode::get(C, None));
+
+        }
+{% endhighlight %}
 
 
 
