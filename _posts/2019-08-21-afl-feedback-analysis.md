@@ -1,5 +1,5 @@
 ---
-title: AFL
+title: AFL代码细节
 author: rk700
 layout: post
 catalog: true
